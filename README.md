@@ -164,6 +164,20 @@ npm run db:setup
 
 This creates the tables and seeds your initial profile + 6 projects into Turso.
 
+**1b. (Optional) Carry your local projects into Turso**
+
+Your local `data/app.db` is gitignored and *never* leaves your machine — so by default the Turso DB you just created only has the original seeded defaults. To copy your current projects, profile edits, and inbox into Turso instead, run:
+
+```bash
+# DATABASE_URL still pointing at Turso from the previous step
+npm run db:push            # ensure schema exists (no-op if already there)
+npm run db:migrate-local   # copies data/app.db → DATABASE_URL
+```
+
+The script is idempotent (re-runs upsert by primary key) and your local DB is read-only here — nothing on your laptop is changed.
+
+> Image URLs migrate as-is, so any `/uploads/...` paths still reference your local FS. After deploying, re-upload images for those projects through `/admin` and Vercel Blob will take over. CV: same idea.
+
 **2. Push to GitHub** (already done) and import the repo on [vercel.com/new](https://vercel.com/new).
 
 **3. Add a Blob store**
