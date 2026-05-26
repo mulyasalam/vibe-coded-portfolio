@@ -11,7 +11,8 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/db/seed.ts",
     "db:setup": "npm run db:push && npm run db:seed",
-    "db:migrate-local": "tsx src/db/migrate-local.ts"
+    "db:migrate-local": "tsx src/db/migrate-local.ts",
+    "db:migrate-uploads": "tsx src/db/migrate-uploads-to-blob.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
