@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"D:\\\\VibeCode\\\\PortofolioAI\" -ErrorAction SilentlyContinue; if \\(-not \\(Test-Path \"D:\\\\VibeCode\\\\PortofolioAI\"\\)\\) { Write-Host \"Directory does not exist\" })"
+    ]
+  }
+}
