@@ -138,21 +138,57 @@ npm run build
 npm run start
 ```
 
-### Vercel (recommended for the public site)
+### Vercel (recommended)
 
-The code deploys to Vercel as-is, **but you must swap two backends** because Vercel's filesystem is read-only at runtime:
+The repo is **Vercel-ready** — file uploads auto-switch to Vercel Blob the moment `BLOB_READ_WRITE_TOKEN` is set, and the DB layer already speaks libSQL. You don't need to edit code; just provision two stores and add the env vars.
 
-1. **Database** — replace the local SQLite file with a remote libSQL on [Turso](https://turso.tech):
-   ```
-   DATABASE_URL=libsql://<your-db>.turso.io?authToken=<token>
-   ```
-   The schema and Drizzle code are unchanged — same `@libsql/client`. Run `npm run db:push` locally with the new URL to migrate, then `npm run db:seed`.
+#### One-time setup
 
-2. **File uploads** — swap `src/lib/server/storage.ts` for [Vercel Blob](https://vercel.com/docs/storage/vercel-blob) or [Uploadthing](https://uploadthing.com). The interface to change is `saveUpload(file, kind) => { url, name, size }`; everything else is already URL-based.
+**1. Provision a libSQL database (Turso — free tier is plenty)**
 
-3. Set every env var from `.env.local` in the Vercel project settings. **Change `ADMIN_PASSWORD` to something strong.**
+```bash
+# Install Turso CLI: https://docs.turso.tech/cli/installation
+turso auth signup
+turso db create portfolio
+turso db show portfolio --url        # → libsql://<...>.turso.io
+turso db tokens create portfolio     # → eyJ...
+```
 
-4. Deploy. The `seed.ts` script is a one-time, run-locally affair — it does not run on Vercel.
+Build the full URL and run schema push + seed against it locally:
+
+```bash
+# in your shell — DON'T commit these
+export DATABASE_URL='libsql://<host>.turso.io?authToken=<token>'
+npm run db:setup
+```
+
+This creates the tables and seeds your initial profile + 6 projects into Turso.
+
+**2. Push to GitHub** (already done) and import the repo on [vercel.com/new](https://vercel.com/new).
+
+**3. Add a Blob store**
+
+In the Vercel project: **Storage → Create → Blob**. Vercel auto-injects `BLOB_READ_WRITE_TOKEN` into the project env.
+
+**4. Set env vars** on the Vercel project (Project → Settings → Environment Variables):
+
+| Var | Value |
+|---|---|
+| `DATABASE_URL` | `libsql://<host>.turso.io?authToken=<token>` |
+| `ADMIN_PASSWORD` | something strong — **not** `admin` |
+| `SESSION_SECRET` | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `RESEND_API_KEY` | *(optional)* if you want contact-form emails |
+| `CONTACT_TO_EMAIL` | *(optional)* destination address |
+
+`BLOB_READ_WRITE_TOKEN` is added automatically when you create the Blob store.
+
+**5. Deploy.** That's it. The site is live; admin lives at `/admin/login`.
+
+#### After deploy
+
+- New uploads go to Vercel Blob (URLs look like `https://*.public.blob.vercel-storage.com/...`).
+- All edits in `/admin` write directly to Turso — no rebuild needed.
+- To **reset** content in production: re-run `npm run db:setup` locally with the production `DATABASE_URL` *after* `rm`ing the data — but be careful, this wipes prod data.
 
 ### Reset the local DB
 
