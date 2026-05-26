@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { db, projects, messages } from "@/db";
 import { asc, desc, isNull } from "drizzle-orm";
 import { getSiteData } from "@/lib/server/site-data";

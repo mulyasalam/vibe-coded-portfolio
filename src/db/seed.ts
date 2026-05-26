@@ -1,26 +1,33 @@
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { config } from "dotenv";
-import { existsSync, mkdirSync } from "node:fs";
-import path from "node:path";
 import { profile, projects } from "../lib/data";
 import { users, projects as projectsTbl } from "./schema";
 
 config({ path: ".env.local" });
 config();
 
-const dataDir = path.join(process.cwd(), "data");
-if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+const url =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.POSTGRES_URL;
 
-const client = createClient({
-  url: process.env.DATABASE_URL ?? "file:./data/app.db",
-});
+if (!url) {
+  console.error(
+    "✗ DATABASE_URL is not set. Add it to .env.local before seeding."
+  );
+  process.exit(1);
+}
+
+const client = postgres(url, { prepare: false });
 const db = drizzle(client);
 
 async function main() {
   const existing = await db.select().from(users).limit(1);
   if (existing.length > 0) {
-    console.log("✓ Database already seeded — skipping. (run db:push then delete data/app.db to reseed)");
+    console.log(
+      "✓ Database already seeded — skipping. (Drop the tables in Drizzle Studio or your DB to reseed.)"
+    );
     return;
   }
 
@@ -61,6 +68,7 @@ async function main() {
 }
 
 main()
+  .then(() => client.end({ timeout: 2 }))
   .then(() => process.exit(0))
   .catch((err) => {
     console.error(err);

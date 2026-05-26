@@ -2,7 +2,7 @@
 
 A personal portfolio that doubles as proof of how it was built — every project here was vibe-coded (prompted, steered, hand-finished). Public landing page plus a hidden `/admin` dashboard for editing profile, CV, projects, and reading messages from the contact form.
 
-> Editorial brutalism in cream / ink / vermillion. Instrument Serif + Geist + Geist Mono. Server-rendered, SQLite-backed, deployable to Vercel.
+> Editorial brutalism in cream / ink / vermillion. Instrument Serif + Geist + Geist Mono. Server-rendered, Postgres-backed, deployable to Vercel.
 
 ---
 
@@ -12,7 +12,7 @@ A personal portfolio that doubles as proof of how it was built — every project
 |---|---|
 | Framework | Next.js 15 (App Router) + TypeScript |
 | Styling | Tailwind CSS + handwritten shadcn-style primitives |
-| Database | SQLite via `@libsql/client` + Drizzle ORM |
+| Database | PostgreSQL via `postgres.js` + Drizzle ORM |
 | Auth | `jose` HS256 JWT in an httpOnly cookie + Next.js middleware |
 | Storage | Local FS (`public/uploads/`) — see deploy notes |
 | Validation | zod schemas shared by client + server |
@@ -22,14 +22,16 @@ A personal portfolio that doubles as proof of how it was built — every project
 
 ## Quick start (local)
 
+You need a Postgres database. The easiest option is a free [Neon](https://neon.tech) project — sign up, create a database, copy the connection string. (Docker `postgres:16` also works if you'd rather run locally.)
+
 ```bash
 # 1. install
 npm install
 
-# 2. env — copy and edit
+# 2. env — copy and set DATABASE_URL to your Postgres URL
 cp .env.example .env.local
 
-# 3. database — create the SQLite file, push schema, seed defaults
+# 3. push the schema + seed the defaults
 npm run db:setup
 
 # 4. run
@@ -54,7 +56,7 @@ Copy `.env.example` to `.env.local` and fill in:
 
 | Var | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:./data/app.db` for local, `libsql://…` for Turso in production |
+| `DATABASE_URL` | yes | Postgres connection string (Neon, Vercel Postgres, Supabase, local) |
 | `ADMIN_PASSWORD` | yes | Plain string, compared in constant time. Change before deploying. |
 | `SESSION_SECRET` | yes | 32+ random chars used to sign the session JWT |
 | `RESEND_API_KEY` | no | Set to also email-forward contact messages |
@@ -76,10 +78,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `npm run build` | Production build |
 | `npm run start` | Run the prod build |
 | `npm run lint` | ESLint |
-| `npm run db:push` | Apply Drizzle schema to the configured DB |
+| `npm run db:push` | Apply Drizzle schema to the configured Postgres DB |
 | `npm run db:seed` | Seed defaults from `src/lib/data.ts` (skips if already seeded) |
 | `npm run db:setup` | `db:push` then `db:seed` |
 | `npm run db:studio` | Open Drizzle Studio in the browser |
+| `npm run db:migrate-local` | One-shot: copy old local SQLite `data/app.db` into Postgres |
 
 ---
 
@@ -140,69 +143,60 @@ npm run start
 
 ### Vercel (recommended)
 
-The repo is **Vercel-ready** — file uploads auto-switch to Vercel Blob the moment `BLOB_READ_WRITE_TOKEN` is set, and the DB layer already speaks libSQL. You don't need to edit code; just provision two stores and add the env vars.
+The repo is **Vercel-ready**. File uploads auto-switch to Vercel Blob the moment `BLOB_READ_WRITE_TOKEN` is set, and the DB layer reads from `DATABASE_URL` *or* the `POSTGRES_*` vars that Vercel auto-injects. No code changes needed — just provision two stores and set env vars.
 
 #### One-time setup
 
-**1. Provision a libSQL database (Turso — free tier is plenty)**
+**1. Push to GitHub** (already done) and import the repo on [vercel.com/new](https://vercel.com/new).
 
-```bash
-# Install Turso CLI: https://docs.turso.tech/cli/installation
-turso auth signup
-turso db create portfolio
-turso db show portfolio --url        # → libsql://<...>.turso.io
-turso db tokens create portfolio     # → eyJ...
-```
+**2. Add a Postgres store**
 
-Build the full URL and run schema push + seed against it locally:
-
-```bash
-# in your shell — DON'T commit these
-export DATABASE_URL='libsql://<host>.turso.io?authToken=<token>'
-npm run db:setup
-```
-
-This creates the tables and seeds your initial profile + 6 projects into Turso.
-
-**1b. (Optional) Carry your local projects into Turso**
-
-Your local `data/app.db` is gitignored and *never* leaves your machine — so by default the Turso DB you just created only has the original seeded defaults. To copy your current projects, profile edits, and inbox into Turso instead, run:
-
-```bash
-# DATABASE_URL still pointing at Turso from the previous step
-npm run db:push            # ensure schema exists (no-op if already there)
-npm run db:migrate-local   # copies data/app.db → DATABASE_URL
-```
-
-The script is idempotent (re-runs upsert by primary key) and your local DB is read-only here — nothing on your laptop is changed.
-
-> Image URLs migrate as-is, so any `/uploads/...` paths still reference your local FS. After deploying, re-upload images for those projects through `/admin` and Vercel Blob will take over. CV: same idea.
-
-**2. Push to GitHub** (already done) and import the repo on [vercel.com/new](https://vercel.com/new).
+Vercel project → **Storage → Create → Postgres** (Neon-backed). Vercel auto-injects `POSTGRES_URL`, `POSTGRES_URL_NON_POOLING`, `POSTGRES_PRISMA_URL`, and friends into your project env.
 
 **3. Add a Blob store**
 
-In the Vercel project: **Storage → Create → Blob**. Vercel auto-injects `BLOB_READ_WRITE_TOKEN` into the project env.
+Same dashboard: **Storage → Create → Blob**. Vercel auto-injects `BLOB_READ_WRITE_TOKEN`.
 
-**4. Set env vars** on the Vercel project (Project → Settings → Environment Variables):
+**4. Set the remaining env vars**
 
 | Var | Value |
 |---|---|
-| `DATABASE_URL` | `libsql://<host>.turso.io?authToken=<token>` |
 | `ADMIN_PASSWORD` | something strong — **not** `admin` |
 | `SESSION_SECRET` | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `RESEND_API_KEY` | *(optional)* if you want contact-form emails |
 | `CONTACT_TO_EMAIL` | *(optional)* destination address |
 
-`BLOB_READ_WRITE_TOKEN` is added automatically when you create the Blob store.
+**5. Push schema + seed Postgres** (run once from your machine)
 
-**5. Deploy.** That's it. The site is live; admin lives at `/admin/login`.
+Grab the `POSTGRES_URL_NON_POOLING` value from the Vercel dashboard, then locally:
+
+```powershell
+$env:DATABASE_URL = "postgres://...neon.tech/...?sslmode=require"   # the non-pooling URL
+npm run db:push       # create tables in Postgres
+npm run db:seed       # seed default profile + 6 projects
+```
+
+**5b. (Optional) Carry your local projects into Postgres**
+
+If you've been editing `/admin` locally and had a SQLite DB (`data/app.db`), you can migrate everything over instead of using the defaults:
+
+```powershell
+# DATABASE_URL still pointing at Vercel Postgres
+npm run db:push              # no-op if already pushed
+npm run db:migrate-local     # copies data/app.db → Postgres
+```
+
+The script is idempotent (upsert by id) and reads SQLite as-is — nothing on your machine is changed.
+
+> Image URLs migrate as-is, so any `/uploads/...` paths still reference your local FS. After deploying, re-upload those images via `/admin` in production and Vercel Blob will take over. Same for the CV.
+
+**6. Deploy on Vercel.** That's it. The site is live; admin lives at `/admin/login`.
 
 #### After deploy
 
 - New uploads go to Vercel Blob (URLs look like `https://*.public.blob.vercel-storage.com/...`).
-- All edits in `/admin` write directly to Turso — no rebuild needed.
-- To **reset** content in production: re-run `npm run db:setup` locally with the production `DATABASE_URL` *after* `rm`ing the data — but be careful, this wipes prod data.
+- All `/admin` edits write directly to Postgres — no rebuild needed.
+- To **reset** prod content: drop the tables in the Neon dashboard and re-run `db:setup` against the prod URL.
 
 ### Reset the local DB
 

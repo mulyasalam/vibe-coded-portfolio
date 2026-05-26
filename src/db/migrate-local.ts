@@ -1,66 +1,133 @@
 /**
- * One-shot copy of your local SQLite database into a remote libSQL (Turso).
+ * One-shot copy of your local SQLite database into a remote Postgres.
+ *
+ * Use this if you've been editing /admin locally (writing to data/app.db)
+ * and want to carry those projects/profile/messages into Postgres before
+ * deploying.
  *
  * Usage (PowerShell):
- *   $env:DATABASE_URL = "libsql://<host>.turso.io?authToken=<token>"
- *   npm run db:push           # ensure schema exists on the target
- *   npm run db:migrate-local  # copy users/projects/messages from data/app.db
+ *   $env:DATABASE_URL = "postgres://...neon.tech/db?sslmode=require"
+ *   npm run db:push           # ensure schema exists in Postgres
+ *   npm run db:migrate-local  # copy data/app.db → DATABASE_URL
  *
- * Usage (bash):
- *   DATABASE_URL='libsql://<host>.turso.io?authToken=<token>' \
- *     npm run db:push && npm run db:migrate-local
- *
- * Safe to re-run: rows are upserted by primary key.
+ * Safe to re-run: rows are upserted by primary key. Your local SQLite
+ * file is read-only here — nothing on your laptop is changed.
  */
 
 import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import postgres from "postgres";
+import { drizzle as drizzleSqlite } from "drizzle-orm/libsql";
+import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
+import { sqliteTable, text as sqliteText, integer as sqliteInt } from "drizzle-orm/sqlite-core";
 import { config } from "dotenv";
+import { existsSync } from "node:fs";
 import { users, projects, messages } from "./schema";
 
 config({ path: ".env.local" });
 config();
 
-const target = process.env.DATABASE_URL;
+const target =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.POSTGRES_URL;
+
 if (!target) {
-  console.error("✗ DATABASE_URL is not set. Aborting.");
+  console.error("✗ DATABASE_URL is not set.");
   process.exit(1);
 }
-if (target.startsWith("file:")) {
+if (target.startsWith("file:") || target.startsWith("libsql:")) {
   console.error(
-    "✗ DATABASE_URL points at a local file — this script copies LOCAL → REMOTE."
+    "✗ DATABASE_URL points at SQLite/libSQL — this script copies LOCAL SQLite → Postgres."
   );
-  console.error(
-    "  Set DATABASE_URL to your Turso libsql URL before running. Local DB stays untouched."
-  );
+  console.error("  Set DATABASE_URL to your Postgres URL before running.");
   process.exit(1);
 }
 
-const localClient = createClient({ url: "file:./data/app.db" });
-const remoteClient = createClient({ url: target });
-const local = drizzle(localClient);
-const remote = drizzle(remoteClient);
+const localPath = "./data/app.db";
+if (!existsSync(localPath)) {
+  console.error(`✗ No local SQLite DB found at ${localPath}. Nothing to migrate.`);
+  process.exit(1);
+}
+
+// Source: SQLite (matches the OLD sqlite-core schema we used to ship).
+type Social = { label: string; handle: string; href: string };
+const sqliteUsers = sqliteTable("users", {
+  id: sqliteText("id").primaryKey(),
+  email: sqliteText("email").notNull().unique(),
+  name: sqliteText("name").notNull(),
+  role: sqliteText("role").notNull(),
+  city: sqliteText("city").notNull(),
+  locale: sqliteText("locale").notNull(),
+  bio: sqliteText("bio").notNull(),
+  longBio: sqliteText("long_bio").notNull(),
+  cvUrl: sqliteText("cv_url"),
+  cvName: sqliteText("cv_name"),
+  cvSize: sqliteInt("cv_size"),
+  cvUploadedAt: sqliteText("cv_uploaded_at"),
+  socials: sqliteText("socials", { mode: "json" }).$type<Social[]>().notNull(),
+  createdAt: sqliteText("created_at").notNull(),
+});
+const sqliteProjects = sqliteTable("projects", {
+  id: sqliteText("id").primaryKey(),
+  userId: sqliteText("user_id").notNull(),
+  title: sqliteText("title").notNull(),
+  client: sqliteText("client").notNull(),
+  category: sqliteText("category").notNull(),
+  year: sqliteInt("year").notNull(),
+  linkUrl: sqliteText("link_url").notNull(),
+  imageUrl: sqliteText("image_url").notNull(),
+  techStack: sqliteText("tech_stack", { mode: "json" }).$type<string[]>().notNull(),
+  summary: sqliteText("summary").notNull(),
+  sortOrder: sqliteInt("sort_order").notNull(),
+  createdAt: sqliteText("created_at").notNull(),
+});
+const sqliteMessages = sqliteTable("messages", {
+  id: sqliteText("id").primaryKey(),
+  name: sqliteText("name").notNull(),
+  email: sqliteText("email").notNull(),
+  subject: sqliteText("subject").notNull(),
+  message: sqliteText("message").notNull(),
+  readAt: sqliteText("read_at"),
+  createdAt: sqliteText("created_at").notNull(),
+});
+
+const sourceClient = createClient({ url: "file:./data/app.db" });
+const source = drizzleSqlite(sourceClient);
+
+const targetClient = postgres(target, { prepare: false });
+const dest = drizzlePg(targetClient);
+
+function isoStamp(v: unknown): string {
+  if (!v) return new Date().toISOString();
+  const s = String(v);
+  // SQLite default `current_timestamp` returns "YYYY-MM-DD HH:MM:SS" — make it ISO.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+    return new Date(s.replace(" ", "T") + "Z").toISOString();
+  }
+  return s;
+}
 
 async function main() {
-  const localUsers = await local.select().from(users);
-  const localProjects = await local.select().from(projects);
-  const localMessages = await local.select().from(messages);
+  const localUsers = await source.select().from(sqliteUsers);
+  const localProjects = await source.select().from(sqliteProjects);
+  const localMessages = await source.select().from(sqliteMessages);
 
   console.log(
-    `→ source: ${localUsers.length} users, ${localProjects.length} projects, ${localMessages.length} messages`
+    `→ source (SQLite): ${localUsers.length} users, ${localProjects.length} projects, ${localMessages.length} messages`
   );
 
   if (localUsers.length === 0) {
-    console.error(
-      "✗ Local DB looks empty. Did you run `npm run db:setup` locally first?"
-    );
+    console.error("✗ Local SQLite is empty — nothing to migrate.");
     process.exit(1);
   }
 
   for (const u of localUsers) {
-    await remote
+    await dest
       .insert(users)
-      .values(u)
+      .values({
+        ...u,
+        createdAt: isoStamp(u.createdAt),
+      })
       .onConflictDoUpdate({
         target: users.id,
         set: {
@@ -81,9 +148,12 @@ async function main() {
   }
 
   for (const p of localProjects) {
-    await remote
+    await dest
       .insert(projects)
-      .values(p)
+      .values({
+        ...p,
+        createdAt: isoStamp(p.createdAt),
+      })
       .onConflictDoUpdate({
         target: projects.id,
         set: {
@@ -102,9 +172,12 @@ async function main() {
   }
 
   for (const m of localMessages) {
-    await remote
+    await dest
       .insert(messages)
-      .values(m)
+      .values({
+        ...m,
+        createdAt: isoStamp(m.createdAt),
+      })
       .onConflictDoUpdate({
         target: messages.id,
         set: {
@@ -117,20 +190,21 @@ async function main() {
       });
   }
 
-  const remoteCounts = {
-    users: (await remote.select().from(users)).length,
-    projects: (await remote.select().from(projects)).length,
-    messages: (await remote.select().from(messages)).length,
+  const counts = {
+    users: (await dest.select().from(users)).length,
+    projects: (await dest.select().from(projects)).length,
+    messages: (await dest.select().from(messages)).length,
   };
   console.log(
-    `✓ done. target now has ${remoteCounts.users} users, ${remoteCounts.projects} projects, ${remoteCounts.messages} messages.`
+    `✓ done. Postgres now has ${counts.users} users, ${counts.projects} projects, ${counts.messages} messages.`
   );
   console.log(
-    "  NOTE: project image_urls still point at /uploads/... — re-upload images via /admin in production to push them into Vercel Blob."
+    "  NOTE: image_url / cv_url still reference /uploads/... — re-upload in production /admin to push files into Vercel Blob."
   );
 }
 
 main()
+  .then(() => targetClient.end({ timeout: 2 }))
   .then(() => process.exit(0))
   .catch((err) => {
     console.error(err);

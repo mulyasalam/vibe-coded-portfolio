@@ -1,9 +1,8 @@
-import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
 
 export type Social = { label: string; handle: string; href: string };
 
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
@@ -16,13 +15,13 @@ export const users = sqliteTable("users", {
   cvName: text("cv_name"),
   cvSize: integer("cv_size"),
   cvUploadedAt: text("cv_uploaded_at"),
-  socials: text("socials", { mode: "json" }).$type<Social[]>().notNull(),
-  createdAt: text("created_at")
+  socials: jsonb("socials").$type<Social[]>().notNull(),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
     .notNull()
-    .default(sql`(current_timestamp)`),
+    .defaultNow(),
 });
 
-export const projects = sqliteTable("projects", {
+export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
@@ -33,24 +32,24 @@ export const projects = sqliteTable("projects", {
   year: integer("year").notNull(),
   linkUrl: text("link_url").notNull().default(""),
   imageUrl: text("image_url").notNull().default(""),
-  techStack: text("tech_stack", { mode: "json" }).$type<string[]>().notNull(),
+  techStack: jsonb("tech_stack").$type<string[]>().notNull(),
   summary: text("summary").notNull().default(""),
   sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: text("created_at")
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
     .notNull()
-    .default(sql`(current_timestamp)`),
+    .defaultNow(),
 });
 
-export const messages = sqliteTable("messages", {
+export const messages = pgTable("messages", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull(),
   subject: text("subject").notNull(),
   message: text("message").notNull(),
   readAt: text("read_at"),
-  createdAt: text("created_at")
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
     .notNull()
-    .default(sql`(current_timestamp)`),
+    .defaultNow(),
 });
 
 export type DbUser = typeof users.$inferSelect;

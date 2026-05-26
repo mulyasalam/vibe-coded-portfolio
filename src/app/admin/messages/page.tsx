@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { db, messages } from "@/db";
 import { desc } from "drizzle-orm";
 import { MessagesInbox } from "@/components/admin/messages-inbox";
